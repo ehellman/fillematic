@@ -15,6 +15,10 @@ const CARD_EXPIRY = Deno.env.get('CARD_EXPIRY')!;
 const CARD_CVC = Deno.env.get('CARD_CVC')!;
 const CARD_NAME = Deno.env.get('CARD_NAME')!;
 
+const EMAIL_USER = Deno.env.get('EMAIL_USER')!;
+const EMAIL_DOMAIN = Deno.env.get('EMAIL_DOMAIN')!;
+const PASSWORD = Deno.env.get('PASSWORD')!;
+
 const urls = {
   start: Deno.env.get('URL_START')!,
   product: Deno.env.get('URL_PRODUCT')!,
@@ -104,6 +108,7 @@ async function saveSession(
     }),
   );
   log('Session saved!');
+  return true;
 }
 
 async function loadSession(browser: puppeteer.Browser) {
@@ -215,8 +220,17 @@ async function selectDeliveryMethod(page: puppeteer.Page) {
   });
   await nextButton?.click();
 }
+
+async function delay(time: number) {
+  log(`Waiting for ${time}ms...`);
+  return await new Promise(function (resolve) {
+    setTimeout(resolve, time);
+  });
+}
+
 async function logIn(page: puppeteer.Page) {
   // Go to start page
+
   await page.goto(urls.start, { waitUntil: 'networkidle2', timeout: 30_000 });
   console.log('networkidle2 occurred');
   // Handle cookie notice if present
@@ -225,22 +239,48 @@ async function logIn(page: puppeteer.Page) {
   // Open login modal
   let loginButton = await page.waitForSelector(`#${ele.loginButton.open.id}`);
   await loginButton?.click();
+
   await page.waitForSelector(`#${ele.loginModal.id}`, { visible: true });
-  log('Opened login modal');
   await page.waitForSelector(`#${ele.loginModal.form.id}`, { visible: true });
+
+  await delay(1000);
+
   const usernameInput = await page.waitForSelector(
     `#${ele.loginModal.form.usernameInputId}`,
+    { visible: true },
   );
-  await usernameInput?.type(Deno.env.get('USERNAME')!);
+
+  // await usernameInput?.focus();
+  await usernameInput?.type(`${EMAIL_USER}@${EMAIL_DOMAIN}`);
+
+  console.log('username entered', { username: `${EMAIL_USER}@${EMAIL_DOMAIN}` });
+
   const passwordInput = await page.waitForSelector(
     `#${ele.loginModal.form.passwordInputId}`,
+    { visible: true },
   );
-  await passwordInput?.type(Deno.env.get('PASSWORD')!);
+
+  // await passwordInput?.focus();
+  await passwordInput?.type(PASSWORD);
+
+  log("password entered");
   await page.keyboard.press('Enter');
-  await page.waitForNavigation();
-  loginButton = await page.waitForSelector(
-    `#${ele.loginButton.open.id}.hidden`,
-  );
+  // await page.waitForNavigation();
+
+  page.on('request', (request) => {
+    console.log('Request:', request.url());
+  });
+
+  page.on('response', (response) => {
+    console.log('Response:', response.url());
+  });
+  log('waiting for request');
+  await page.waitForRequest("https://www.proshop.se/CustomerCenter/CustomerAccount?ReturnUrl=%2F", { timeout: 15_000});
+  log('request received');
+  await page.waitForNavigation({ waitUntil: 'networkidle2' });
+  // loginButton = await page.waitForSelector(
+  //   `#logout.hidden`,
+  // );
 }
 
 (async () => {
@@ -255,11 +295,15 @@ async function logIn(page: puppeteer.Page) {
   const sessionLoaded = await loadSession(browser);
 
   if (!sessionLoaded) {
+    log("Couldn't load session, logging in...");
     await logIn(page);
     await saveSession(browser);
   } else {
+    log('Session loaded successfully!');
     await saveSession(browser);
   }
+
+  log('Going to product!');
 
   // Continue with the rest of the script
   await page.goto(urls.product);
@@ -267,6 +311,7 @@ async function logIn(page: puppeteer.Page) {
   let buyButtonActive = false;
 
   let refreshCount = 1;
+
   while (!buyButtonActive) {
     log(`Starting monitoring for buy button (round ${refreshCount})...`);
     try {
@@ -286,11 +331,15 @@ async function logIn(page: puppeteer.Page) {
     }
   }
 
+  log("Targeting buy button now...");
   const buyButton = await page.waitForSelector(
     `.${ele.buyButton.parentClass} ${ele.buyButton.selector}`,
   );
 
+  log('Clicking buy button...');
   await buyButton?.click();
+
+  log('Waiting for cart page to load...');
   await page.waitForNavigation();
 
   // verify quantity
